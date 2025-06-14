@@ -55,8 +55,14 @@ bot.on('callback_query', async (callbackQuery) => {
       // Deduct balance
       await database.ref(`users/${chatId}/balance`).set(balance - price);
 
-      // Update user's account info
-      await database.ref(`users/${chatId}/account`).set(accountKey);
+      const purchaseDate = new Date().toISOString().split('T')[0];
+      const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
+      
+      await userAccountRef.set({
+        plan: planName,
+        purchaseDate
+      });
+      
 
       // Add user under account
       await database.ref(`${accountKey}/users/${username}`).set(true);
@@ -129,7 +135,7 @@ bot.on('callback_query', async (callbackQuery) => {
               const users = allData[accountKey].users || {};
               const userCount = Object.keys(users).length;
               buttons.push([{
-                text: `${accountKey} (${userCount} users)`,
+                text: `${accountKey}`,/*(${userCount} users)*/
                 callback_data: `select_account_${accountKey}`
               }]);
             }
@@ -159,15 +165,36 @@ bot.on('callback_query', async (callbackQuery) => {
         });
         break;
 
-      case 'view_account':
-        await bot.sendMessage(chatId, "📺 Your Netflix account details will appear here.", {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-            ]
+        case 'view_account':
+          const userAccountsSnap = await database.ref(`users/${chatId}/accounts`).once('value');
+          const accounts = userAccountsSnap.val();
+        
+          if (!accounts) {
+            await bot.sendMessage(chatId, "😕 You haven't purchased any accounts yet. Please purchase a Netflix account first.", {
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "🎬 Purchase Netflix", callback_data: 'purchase_netflix' }],
+                  [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+                ]
+              }
+            });
+            return;
           }
-        });
-        break;
+        
+          const buttons = Object.keys(accounts).map(accountName => [
+            { text: accountName, callback_data: `view_account_${accountName}` }
+          ]);
+        
+          await bot.sendMessage(chatId, "📺 Your Netflix Accounts:\n\nSelect an account to view details:", {
+            reply_markup: {
+              inline_keyboard: [
+                ...buttons,
+                [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+              ]
+            }
+          });
+          break;
+        
 
       case 'pay_telebirr':
         pendingPhotos[chatId] = true;
@@ -192,7 +219,7 @@ bot.on('callback_query', async (callbackQuery) => {
         break;
 
       default:
-        await bot.sendMessage(chatId, "❓ Unknown option. Please try again.", {
+        await bot.sendMessage(chatId, "❓ Unknown option or may be under construction.", {
           reply_markup: {
             inline_keyboard: [
               [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
@@ -309,6 +336,161 @@ bot.on('message', async (msg) => {
   }
 });
 
+const adminSessions = {}; // store admin's ongoing store steps
+
+bot.onText(/\/store/, async (msg) => {
+  if (msg.chat.id.toString() !== BOT_OWNER_ID) {
+    return bot.sendMessage(msg.chat.id, "❌ You are not authorized to use this command.");
+  }
+
+  adminSessions[msg.chat.id] = {
+    step: 'askAccountKey',
+    data: {}
+  };
+
+  await bot.sendMessage(msg.chat.id, "🛠️ Let's add a new Netflix account.\n\nPlease enter the **account key** (e.g. Account-1):", {parse_mode: 'Markdown'});
+});
+
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id.toString();
+
+  // Only proceed if admin has an active session
+  if (!adminSessions[chatId]) return;
+
+  // Ignore commands to avoid conflicts except /cancel
+  if (msg.text && msg.text.startsWith('/') && msg.text !== '/cancel') return;
+
+  const session = adminSessions[chatId];
+
+  try {
+    switch (session.step) {
+      case 'askAccountKey':
+        {
+          const accountKey = msg.text.trim();
+          if (!accountKey.match(/^Account-\d+$/i)) {
+            await bot.sendMessage(chatId, "❌ Invalid format. Account key must look like 'Account-1' or 'Account-123'. Please enter again:");
+            return;
+          }
+          session.data.accountKey = accountKey;
+
+          // Check if account already exists
+          const snap = await database.ref(accountKey).once('value');
+          if (snap.exists()) {
+            await bot.sendMessage(chatId, `❌ Account key "${accountKey}" already exists. Please enter a different one:`);
+            return;
+          }
+
+          session.step = 'askPlanName';
+          session.data.plans = {};
+          await bot.sendMessage(chatId, "Great! Now enter the first plan name (e.g., '1 month'):");
+        }
+        break;
+
+      case 'askPlanName':
+        {
+          const planName = msg.text.trim();
+          if (!planName) {
+            await bot.sendMessage(chatId, "❌ Plan name cannot be empty. Please enter again:");
+            return;
+          }
+          session.currentPlanName = planName;
+          session.step = 'askPlanPrice';
+
+          await bot.sendMessage(chatId, `Enter the price (in birr) for plan "${planName}":`);
+        }
+        break;
+
+      case 'askPlanPrice':
+        {
+          const price = parseFloat(msg.text.trim());
+          if (isNaN(price) || price <= 0) {
+            await bot.sendMessage(chatId, "❌ Invalid price. Please enter a positive number:");
+            return;
+          }
+
+          // Save plan
+          session.data.plans[session.currentPlanName] = price;
+          session.currentPlanName = null;
+
+          session.step = 'askMorePlansOrEmail';
+          await bot.sendMessage(chatId, "Plan added. Would you like to add another plan? (yes/no)");
+        }
+        break;
+
+      case 'askMorePlansOrEmail':
+        {
+          const text = msg.text.trim().toLowerCase();
+          if (text === 'yes' || text === 'y') {
+            session.step = 'askPlanName';
+            await bot.sendMessage(chatId, "Enter the next plan name:");
+            return;
+          }
+          if (text === 'no' || text === 'n') {
+            session.step = 'askEmail';
+            await bot.sendMessage(chatId, "Please enter the Netflix account email:");
+            return;
+          }
+          await bot.sendMessage(chatId, "Please reply with 'yes' or 'no':");
+        }
+        break;
+
+      case 'askEmail':
+        {
+          const email = msg.text.trim();
+          if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+            await bot.sendMessage(chatId, "❌ Invalid email format. Please enter a valid email:");
+            return;
+          }
+          session.data.email = email;
+          session.step = 'askPassword';
+          await bot.sendMessage(chatId, "Please enter the Netflix account password:");
+        }
+        break;
+
+      case 'askPassword':
+        {
+          const password = msg.text.trim();
+          if (!password) {
+            await bot.sendMessage(chatId, "❌ Password cannot be empty. Please enter again:");
+            return;
+          }
+          session.data.password = password;
+
+          // Save to Firebase
+          const { accountKey, plans, email } = session.data;
+
+          await database.ref(accountKey).set({
+            plan: plans,
+            credential: { email, password },
+            users: {}
+          });
+
+          await bot.sendMessage(chatId, `✅ Successfully added account "${accountKey}" with ${Object.keys(plans).length} plan(s).`);
+
+          // Clear session
+          delete adminSessions[chatId];
+        }
+        break;
+
+      default:
+        await bot.sendMessage(chatId, "❌ Unknown step. Please /cancel and try again.");
+        delete adminSessions[chatId];
+    }
+  } catch (error) {
+    console.error("❌ Error in admin store flow:", error);
+    await bot.sendMessage(chatId, "⚠️ Something went wrong. Please /cancel and try again.");
+    delete adminSessions[chatId];
+  }
+});
+
+// Optional: /cancel command to abort the flow
+bot.onText(/\/cancel/, async (msg) => {
+  const chatId = msg.chat.id.toString();
+  if (adminSessions[chatId]) {
+    delete adminSessions[chatId];
+    await bot.sendMessage(chatId, "❎ Admin store flow cancelled.");
+  }
+});
 
 
 
@@ -321,9 +503,10 @@ async function showMainMenu(chatId, msg = null) {
     const userData = snapshot.val();
 
     const inlineButtons = [
-      [{ text: '➕ Add Fund', callback_data: 'add_fund' }],
-      [{ text: '💳 Purchase Netflix', callback_data: 'purchase_netflix' }],
-      [{ text: '📞 Contact Support', callback_data: 'contact_support' }]
+      [{ text: "💰 Add Fund", callback_data: 'add_fund' }],
+      [{ text: "🎬 Purchase Netflix", callback_data: 'purchase_netflix' }],
+      [{ text: "📺 View Accounts", callback_data: 'view_account' }],
+      [{ text: "📞 Contact Support", callback_data: 'contact_support' }]
     ];
 
     if (userData && userData.account) {
