@@ -4,6 +4,8 @@ const { database } = require('./firebaseConfig');
 const pendingPhotos = {}; // userId => true/false
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
+const {google} = require('googleapis');
+const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 
 // Ensure bot token is available
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -27,6 +29,13 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
 
   try {
+    // Always answer the callback query first to avoid "query is already answered" errors
+    try {
+      await bot.answerCallbackQuery(callbackQuery.id);
+    } catch (answerError) {
+      console.warn("⚠️ answerCallbackQuery failed:", answerError);
+    }
+
     // ✅ Handle plan selection and purchase
     if (data.startsWith('select_plan_')) {
       const parts = data.split('_');
@@ -57,12 +66,12 @@ bot.on('callback_query', async (callbackQuery) => {
 
       const purchaseDate = new Date().toISOString().split('T')[0];
       const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
-      
+
       await userAccountRef.set({
         plan: planName,
-        purchaseDate
+        purchaseDate,
+        chance: 3
       });
-      
 
       // Add user under account
       await database.ref(`${accountKey}/users/${username}`).set(true);
@@ -105,6 +114,73 @@ bot.on('callback_query', async (callbackQuery) => {
       });
       return;
     }
+
+    if (data.startsWith('view_account_')) {
+      const accountKey = data.replace('view_account_', '');
+      // Get user's account data (to read chance value)
+      const userAccountSnap = await database.ref(`users/${chatId}/accounts/${accountKey}`).once('value');
+      const accountData = userAccountSnap.val();
+
+      const chance = accountData?.chance ?? 0;
+
+      await bot.sendMessage(chatId, `📺 Account: <b>${accountKey}</b>\nWhat would you like to do?`, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `✅ Send Code (${chance} chances)`, callback_data: `send_code_${accountKey}` }],
+            [{ text: "🔗 Join Group", callback_data: `join_group_${accountKey}` }],
+            [{ text: "➕ Add Chance", callback_data: `add_chance_${accountKey}` }],
+            [{ text: "⬅️ Back to Accounts", callback_data: 'view_account' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    if (data.startsWith('send_code_')) {
+      const accountKey = data.replace('send_code_', '');
+
+      // Fetch email and password from account
+      const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
+      const credentials = credentialSnap.val();
+
+      if (!credentials || !credentials.email || !credentials.password) {
+        await bot.sendMessage(chatId, `❌ Credentials not found for ${accountKey}.`);
+        return;
+      }
+
+      const { email, password } = credentials;
+
+      // 👇 You would replace this with actual logic to fetch code from inbox
+      const code = await fetchLatestCodeFromEmail(email, password);
+
+      if (!code) {
+        await bot.sendMessage(chatId, `⚠️ No code found for ${email} yet. Please wait a few minutes and try again.`);
+        return;
+      }
+
+      // Decrease chance by 1
+      const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
+      const accountSnap = await userAccountRef.once('value');
+      const accountData = accountSnap.val();
+
+      const currentChances = accountData?.chance || 0;
+      const newChances = Math.max(currentChances - 1, 0);
+      await userAccountRef.update({ chance: newChances });
+
+      const body = await fetchLatestCodeFromEmail(email, password);
+
+      if (!body) {
+        await bot.sendMessage(chatId, `⚠️ No new Netflix emails found yet. Please wait a bit and try again.`);
+        return;
+      }
+
+      await bot.sendMessage(chatId, `📩 Latest Code for ${body}:\n\n<code>${code}</code>\n\n🎯 Chances left: <b>${newChances}</b>`, {
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
 
     // ✅ Static menu handling
     switch (data) {
@@ -165,36 +241,35 @@ bot.on('callback_query', async (callbackQuery) => {
         });
         break;
 
-        case 'view_account':
-          const userAccountsSnap = await database.ref(`users/${chatId}/accounts`).once('value');
-          const accounts = userAccountsSnap.val();
-        
-          if (!accounts) {
-            await bot.sendMessage(chatId, "😕 You haven't purchased any accounts yet. Please purchase a Netflix account first.", {
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: "🎬 Purchase Netflix", callback_data: 'purchase_netflix' }],
-                  [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-                ]
-              }
-            });
-            return;
-          }
-        
-          const buttons = Object.keys(accounts).map(accountName => [
-            { text: accountName, callback_data: `view_account_${accountName}` }
-          ]);
-        
-          await bot.sendMessage(chatId, "📺 Your Netflix Accounts:\n\nSelect an account to view details:", {
+      case 'view_account':
+        const userAccountsSnap = await database.ref(`users/${chatId}/accounts`).once('value');
+        const accounts = userAccountsSnap.val();
+
+        if (!accounts) {
+          await bot.sendMessage(chatId, "😕 You haven't purchased any accounts yet. Please purchase a Netflix account first.", {
             reply_markup: {
               inline_keyboard: [
-                ...buttons,
+                [{ text: "🎬 Purchase Netflix", callback_data: 'purchase_netflix' }],
                 [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
               ]
             }
           });
-          break;
-        
+          return;
+        }
+
+        const buttons = Object.keys(accounts).map(accountName => [
+          { text: accountName, callback_data: `view_account_${accountName}` }
+        ]);
+
+        await bot.sendMessage(chatId, "📺 Your Netflix Accounts:\n\nSelect an account to view details:", {
+          reply_markup: {
+            inline_keyboard: [
+              ...buttons,
+              [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+            ]
+          }
+        });
+        break;
 
       case 'pay_telebirr':
         pendingPhotos[chatId] = true;
@@ -228,13 +303,12 @@ bot.on('callback_query', async (callbackQuery) => {
         });
     }
 
-    await bot.answerCallbackQuery(callbackQuery.id);
-
   } catch (error) {
     console.error("❌ Error handling callback_query:", error);
     await bot.sendMessage(chatId, "⚠️ An error occurred. Please try again later.");
   }
 });
+
 
 
 
@@ -562,3 +636,4 @@ async function showMainMenu(chatId, msg = null) {
     await bot.sendMessage(chatId, "⚠️ An error occurred. Please try again later.");
   }
 }
+

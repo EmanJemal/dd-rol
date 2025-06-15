@@ -1,0 +1,52 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  body {
+    background-color: #d8bfbf;
+    font-family: 'Poppins', sans-serif;
+    padding: 20px;
+  }
+  
+  .client-list {
+    border: 2px solid black;
+    border-radius: 8px;
+    padding: 20px;
+    background-color: #fff;
+    max-width: 90%;
+    margin: auto;
+    overflow-x: auto;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  
+  thead {
+    background-color: #f0f0f0;
+  }
+  
+  th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ccc;
+  }
+  
+  th {
+    font-size: 18px;
+  }
+  
+  td {
+    font-size: 16px;
+  }
+  
+  @media screen and (max-width: 600px) {
+    th, td {
+      font-size: 14px;
+      padding: 8px 10px;
+    }
+  }
+
