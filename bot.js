@@ -6,6 +6,7 @@ const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
 const {google} = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
+const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
 const fs = require('fs');
 const path = require('path');
 
@@ -31,17 +32,12 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
 
   try {
-    // Always answer the callback query first to avoid "query is already answered" errors
-    try {
-      await bot.answerCallbackQuery(callbackQuery.id);
-    } catch (answerError) {
-      console.warn("⚠️ answerCallbackQuery failed:", answerError);
-    }
+    await bot.answerCallbackQuery(callbackQuery.id); // Avoid "already answered" errors
 
-    // ✅ Handle plan selection and purchase
+    // ✅ Plan selection and purchase
     if (data.startsWith('select_plan_')) {
       const parts = data.split('_');
-      const accountKey = parts[parts.length - 1]; // Account key is last
+      const accountKey = parts[parts.length - 1];
       const planName = parts.slice(2, parts.length - 1).join(' ').replace(/_/g, ' ');
 
       const planSnapshot = await database.ref(`${accountKey}/plan/${planName}`).once('value');
@@ -54,7 +50,6 @@ bot.on('callback_query', async (callbackQuery) => {
 
       const userSnapshot = await database.ref(`users/${chatId}`).once('value');
       const userData = userSnapshot.val();
-
       const balance = userData?.balance || 0;
       const username = userData?.contactInfo?.username || `user-${chatId}`;
 
@@ -63,19 +58,15 @@ bot.on('callback_query', async (callbackQuery) => {
         return;
       }
 
-      // Deduct balance
       await database.ref(`users/${chatId}/balance`).set(balance - price);
 
       const purchaseDate = new Date().toISOString().split('T')[0];
-      const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
-
-      await userAccountRef.set({
+      await database.ref(`users/${chatId}/accounts/${accountKey}`).set({
         plan: planName,
         purchaseDate,
         chance: 3
       });
 
-      // Add user under account
       await database.ref(`${accountKey}/users/${username}`).set(true);
 
       await bot.sendMessage(chatId, `✅ Successfully purchased ${planName} from ${accountKey} for ${price} birr.`, {
@@ -88,7 +79,7 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
 
-    // ✅ Show available plans under an account
+    // ✅ View plans under account
     if (data.startsWith('select_account_')) {
       const accountKey = data.replace('select_account_', '');
       const plansSnapshot = await database.ref(`${accountKey}/plan`).once('value');
@@ -117,14 +108,13 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
 
+    // ✅ View individual account
     if (data.startsWith('view_account_')) {
       const accountKey = data.replace('view_account_', '');
-      // Get user's account data (to read chance value)
       const userAccountSnap = await database.ref(`users/${chatId}/accounts/${accountKey}`).once('value');
       const accountData = userAccountSnap.val();
       const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
       const credentials = credentialSnap.val();
-
       const chance = accountData?.chance ?? 0;
 
       await bot.sendMessage(chatId, `<b>${accountKey}</b>\n ኮዱን ወደዚ <b><code>${credentials.email}</code></b>አካውንት ከላኩ ቡሃላ ብቻ, አንዴ Send code የሚለውን ይጫኑ`, {
@@ -141,105 +131,97 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
 
-    if (data.startsWith('send_code_')) {
-      const accountKey = data.replace('send_code_', '');
-    
-      // Optional: still fetch credentials from Firebase if you want to display email
-      const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
-      const credentials = credentialSnap.val();
-    
-      if (!credentials || !credentials.email) {
-        await bot.sendMessage(chatId, `❌ Credentials not found for ${accountKey}.`);
-        return;
-      }
-    
-      const code = await fetchLatestCodeFromEmail();
-    
-      if (!code) {
-        await bot.sendMessage(chatId, `⚠️ No code found in your Gmail inbox yet. Please wait a few minutes and try again.`);
-        return;
-      }
-    
-      // Decrease chance by 1
-      const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
-      const accountSnap = await userAccountRef.once('value');
-      const accountData = accountSnap.val();
-    
-      const currentChances = accountData?.chance || 0;
+    // ✅ Send Gmail Code (limited attempts)
+// ✅ Send Gmail Code (limited attempts)
+if (data.startsWith('send_code_')) {
+  const accountKey = data.replace('send_code_', '');
+  const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
+  const credentials = credentialSnap.val();
 
-      if (currentChances === 0) {
-        await bot.sendMessage(chatId, `You don't have enough chance`, {
-          parse_mode: 'HTML'
-        });
-      }
-      else {
-        const newChances = Math.max(currentChances - 1, 0);
-        await userAccountRef.update({ chance: newChances });
-        
-        await bot.sendMessage(chatId, `📩 Latest Netflix Code:\n\n<code>${code}</code>\n\n🎯 Chances left: <b>${newChances}</b>`, {
-          parse_mode: 'HTML'
-        });
-      }
+  if (!credentials || !credentials.email) {
+    await bot.sendMessage(chatId, `❌ Credentials not found for ${accountKey}.`);
+    return;
+  }
 
-    
-      return;
-    }
-    
+  const requestKey = `${chatId}_${accountKey}`;
+  if (activeCodeRequests[requestKey] && (Date.now() - activeCodeRequests[requestKey]) < 10000) {
+    await bot.sendMessage(chatId, `⏳ Please wait a few seconds before requesting another code.`);
+    return;
+  }
+
+  activeCodeRequests[requestKey] = Date.now();
+
+  const code = await fetchLatestCodeFromEmail(credentials.email);
+
+  setTimeout(() => delete activeCodeRequests[requestKey], 10000);
+
+  if (!code) {
+    await bot.sendMessage(chatId, `⚠️ No code found in your Gmail inbox yet. Please wait a few minutes and try again.`);
+    return;
+  }
+
+  const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
+  const accountSnap = await userAccountRef.once('value');
+  const accountData = accountSnap.val();
+  const currentChances = accountData?.chance || 0;
+
+  if (currentChances === 0) {
+    await bot.sendMessage(chatId, `❌ You don't have enough chances left.`);
+    return;
+  }
+
+  const newChances = Math.max(currentChances - 1, 0);
+  await userAccountRef.update({ chance: newChances });
+
+  await bot.sendMessage(chatId, `📩 Latest Netflix Code:\n\n<code>${code}</code>\n\n🎯 Chances left: <b>${newChances}</b>`, {
+    parse_mode: 'HTML'
+  });
+  return;
+}
 
 
-    // ✅ Static menu handling
+    // ✅ Menu handlers
     switch (data) {
       case 'back_to_menu':
         await showMainMenu(chatId);
         break;
 
       case 'add_fund':
-          const photoPath = path.join(__dirname, 'plan.png');
-          await bot.sendPhoto(chatId, photoPath, {
-            caption: "💰 Add Fund\n\nPlease choose a payment method:",
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
-                [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
-                [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-              ]
-            }
-          });
-          break;
-        
+        const photoPath = path.join(__dirname, 'plan.png');
+        await bot.sendPhoto(chatId, photoPath, {
+          caption: "💰 Add Fund\n\nPlease choose a payment method:",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
+              [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
+              [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+            ]
+          }
+        }, { contentType: 'image/png' });
+        break;
+
       case 'purchase_netflix':
-        try {
-          const snapshot = await database.ref('/').once('value');
-          const allData = snapshot.val();
-          const buttons = [];
+        const snapshot = await database.ref('/').once('value');
+        const allData = snapshot.val();
+        const buttons = [];
 
-          for (const accountKey of Object.keys(allData)) {
-            if (accountKey.startsWith('Account-')) {
-              const users = allData[accountKey].users || {};
-              const userCount = Object.keys(users).length;
-              buttons.push([{
-                text: `${accountKey}`,/*(${userCount} users)*/
-                callback_data: `select_account_${accountKey}`
-              }]);
-            }
+        for (const accountKey of Object.keys(allData)) {
+          if (accountKey.startsWith('Account-')) {
+            buttons.push([{ text: accountKey, callback_data: `select_account_${accountKey}` }]);
           }
+        }
 
-          if (buttons.length === 0) {
-            await bot.sendMessage(chatId, "❌ No Netflix accounts found.");
-          } else {
-            await bot.sendMessage(chatId, "📺 Select a Netflix account to view available plans:", {
-              reply_markup: { inline_keyboard: buttons }
-            });
-          }
-
-        } catch (error) {
-          console.error("❌ Error loading accounts:", error);
-          await bot.sendMessage(chatId, "⚠️ Failed to load Netflix accounts.");
+        if (buttons.length === 0) {
+          await bot.sendMessage(chatId, "❌ No Netflix accounts found.");
+        } else {
+          await bot.sendMessage(chatId, "📺 Select a Netflix account to view available plans:", {
+            reply_markup: { inline_keyboard: buttons }
+          });
         }
         break;
 
       case 'contact_support':
-        await bot.sendMessage(chatId, "📞 Contact Support:\nTelegram: @@bon_afro1\nEmail: bon_afro1@gmail.com", {
+        await bot.sendMessage(chatId, "📞 Contact Support:\nTelegram: @bon_afro1\nEmail: bon_afro1@gmail.com", {
           reply_markup: {
             inline_keyboard: [
               [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
@@ -253,7 +235,7 @@ bot.on('callback_query', async (callbackQuery) => {
         const accounts = userAccountsSnap.val();
 
         if (!accounts) {
-          await bot.sendMessage(chatId, "😕 You haven't purchased any accounts yet. Please purchase a Netflix account first.", {
+          await bot.sendMessage(chatId, "😕 You haven't purchased any accounts yet.", {
             reply_markup: {
               inline_keyboard: [
                 [{ text: "🎬 Purchase Netflix", callback_data: 'purchase_netflix' }],
@@ -261,21 +243,20 @@ bot.on('callback_query', async (callbackQuery) => {
               ]
             }
           });
-          return;
+        } else {
+          const accountButtons = Object.keys(accounts).map(account => [
+            { text: account, callback_data: `view_account_${account}` }
+          ]);
+
+          await bot.sendMessage(chatId, "📺 Your Netflix Accounts:\nSelect an account to view details:", {
+            reply_markup: {
+              inline_keyboard: [
+                ...accountButtons,
+                [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+              ]
+            }
+          });
         }
-
-        const buttons = Object.keys(accounts).map(accountName => [
-          { text: accountName, callback_data: `view_account_${accountName}` }
-        ]);
-
-        await bot.sendMessage(chatId, "📺 Your Netflix Accounts:\n\nSelect an account to view details:", {
-          reply_markup: {
-            inline_keyboard: [
-              ...buttons,
-              [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-            ]
-          }
-        });
         break;
 
       case 'pay_telebirr':
@@ -301,7 +282,7 @@ bot.on('callback_query', async (callbackQuery) => {
         break;
 
       default:
-        await bot.sendMessage(chatId, "❓ Unknown option or may be under construction.", {
+        await bot.sendMessage(chatId, "❓ Unknown option or under construction.", {
           reply_markup: {
             inline_keyboard: [
               [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
@@ -315,6 +296,7 @@ bot.on('callback_query', async (callbackQuery) => {
     await bot.sendMessage(chatId, "⚠️ An error occurred. Please try again later.");
   }
 });
+
 
 
 
@@ -635,7 +617,7 @@ async function showMainMenu(chatId, msg = null) {
         reply_markup: {
           inline_keyboard: inlineButtons
         }
-      });
+      },{ contentType: 'image/png' });
       
 
     } else {

@@ -1,9 +1,9 @@
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 const { google } = require('googleapis');
 
 const SCOPES = ['https://mail.google.com/'];
-const TOKEN_PATH = 'token.json';
 const CREDENTIALS_PATH = 'credentials.json';
 
 fs.readFile(CREDENTIALS_PATH, (err, content) => {
@@ -25,8 +25,16 @@ fs.readFile(CREDENTIALS_PATH, (err, content) => {
     oAuth2Client.getToken(code, (err, token) => {
       if (err) return console.error('Error retrieving access token', err);
       oAuth2Client.setCredentials(token);
-      fs.writeFileSync(TOKEN_PATH, JSON.stringify(token));
-      console.log('✅ Token stored to', TOKEN_PATH);
+
+      // ✅ Ensure token directory exists
+      const tokenDir = path.join(__dirname, 'tokens');
+      if (!fs.existsSync(tokenDir)) {
+        fs.mkdirSync(tokenDir);
+      }
+
+      const tokenPath = path.join(tokenDir, 'token-pentawebdev1@gmail.com.json');
+      fs.writeFileSync(tokenPath, JSON.stringify(token));
+      console.log('✅ Token stored to', tokenPath);
     });
   });
 });
