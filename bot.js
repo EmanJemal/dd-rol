@@ -6,6 +6,8 @@ const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
 const {google} = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
+const fs = require('fs');
+const path = require('path');
 
 // Ensure bot token is available
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -166,6 +168,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
       const currentChances = accountData?.chance || 0;
       const newChances = Math.max(currentChances - 1, 0);
+      const photoPath = path.join(__dirname, 'plan.png');
       await userAccountRef.update({ chance: newChances });
 
       const body = await fetchLatestCodeFromEmail(email, password);
@@ -189,14 +192,13 @@ bot.on('callback_query', async (callbackQuery) => {
         break;
 
       case 'add_fund':
-        await bot.sendMessage(chatId, "💰 Add Fund\n\nPlease choose a payment method:", {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
-              [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
-              [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-            ]
-          }
+        await bot.sendPhoto(chatId, photoPath, {
+          caption: "💰 Add Fund\n\nPlease choose a payment method:",
+          reply_markup: [      
+          [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
+          [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
+          [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+        ]
         });
         break;
 
@@ -232,7 +234,7 @@ bot.on('callback_query', async (callbackQuery) => {
         break;
 
       case 'contact_support':
-        await bot.sendMessage(chatId, "📞 Contact Support:\nTelegram: @YourSupportUsername\nEmail: support@example.com", {
+        await bot.sendMessage(chatId, "📞 Contact Support:\nTelegram: @@bon_afro1\nEmail: bon_afro1@gmail.com", {
           reply_markup: {
             inline_keyboard: [
               [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
@@ -568,6 +570,7 @@ bot.onText(/\/cancel/, async (msg) => {
 
 
 
+
 // Show the main menu
 async function showMainMenu(chatId, msg = null) {
   const userRef = database.ref(`users/${chatId}`);
@@ -619,9 +622,16 @@ async function showMainMenu(chatId, msg = null) {
         contactInfo
       });
 
-      await bot.sendMessage(chatId, "✅ Account registered! 👋 Welcome! Please choose an option:", {
-        reply_markup: { inline_keyboard: inlineButtons }
+      // Send image with caption and inline buttons together
+      const photoPath = path.join(__dirname, 'dfc05852-8422-433a-8017-de35ea5a2144.png');
+
+      await bot.sendPhoto(chatId, photoPath, {
+        caption: "👣 Here's how it works:\n\n✅ Account registered! 👋 Welcome! Please choose an option:",
+        reply_markup: {
+          inline_keyboard: inlineButtons
+        }
       });
+      
 
     } else {
       await bot.sendMessage(chatId, `👋 Welcome back! Your balance: ETB 🇪🇹 <b>${userData.balance} birr</b>`, {
@@ -629,11 +639,11 @@ async function showMainMenu(chatId, msg = null) {
         reply_markup: { inline_keyboard: inlineButtons }
       });
     }
-    
 
   } catch (error) {
     console.error("❌ Error in showMainMenu:", error);
     await bot.sendMessage(chatId, "⚠️ An error occurred. Please try again later.");
   }
 }
+
 
