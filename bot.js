@@ -122,10 +122,12 @@ bot.on('callback_query', async (callbackQuery) => {
       // Get user's account data (to read chance value)
       const userAccountSnap = await database.ref(`users/${chatId}/accounts/${accountKey}`).once('value');
       const accountData = userAccountSnap.val();
+      const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
+      const credentials = credentialSnap.val();
 
       const chance = accountData?.chance ?? 0;
 
-      await bot.sendMessage(chatId, `📺 Account: <b>${accountKey}</b>\nWhat would you like to do?`, {
+      await bot.sendMessage(chatId, `<b>${accountKey}</b>\n ኮዱን ወደዚ <b><code>${credentials.email}</code></b>አካውንት ከላኩ ቡሃላ ብቻ, አንዴ Send code የሚለውን ይጫኑ`, {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
@@ -141,48 +143,48 @@ bot.on('callback_query', async (callbackQuery) => {
 
     if (data.startsWith('send_code_')) {
       const accountKey = data.replace('send_code_', '');
-
-      // Fetch email and password from account
+    
+      // Optional: still fetch credentials from Firebase if you want to display email
       const credentialSnap = await database.ref(`${accountKey}/credential`).once('value');
       const credentials = credentialSnap.val();
-
-      if (!credentials || !credentials.email || !credentials.password) {
+    
+      if (!credentials || !credentials.email) {
         await bot.sendMessage(chatId, `❌ Credentials not found for ${accountKey}.`);
         return;
       }
-
-      const { email, password } = credentials;
-
-      // 👇 You would replace this with actual logic to fetch code from inbox
-      const code = await fetchLatestCodeFromEmail(email, password);
-
+    
+      const code = await fetchLatestCodeFromEmail();
+    
       if (!code) {
-        await bot.sendMessage(chatId, `⚠️ No code found for ${email} yet. Please wait a few minutes and try again.`);
+        await bot.sendMessage(chatId, `⚠️ No code found in your Gmail inbox yet. Please wait a few minutes and try again.`);
         return;
       }
-
+    
       // Decrease chance by 1
       const userAccountRef = database.ref(`users/${chatId}/accounts/${accountKey}`);
       const accountSnap = await userAccountRef.once('value');
       const accountData = accountSnap.val();
-
+    
       const currentChances = accountData?.chance || 0;
-      const newChances = Math.max(currentChances - 1, 0);
-      const photoPath = path.join(__dirname, 'plan.png');
-      await userAccountRef.update({ chance: newChances });
 
-      const body = await fetchLatestCodeFromEmail(email, password);
-
-      if (!body) {
-        await bot.sendMessage(chatId, `⚠️ No new Netflix emails found yet. Please wait a bit and try again.`);
-        return;
+      if (currentChances === 0) {
+        await bot.sendMessage(chatId, `You don't have enough chance`, {
+          parse_mode: 'HTML'
+        });
+      }
+      else {
+        const newChances = Math.max(currentChances - 1, 0);
+        await userAccountRef.update({ chance: newChances });
+        
+        await bot.sendMessage(chatId, `📩 Latest Netflix Code:\n\n<code>${code}</code>\n\n🎯 Chances left: <b>${newChances}</b>`, {
+          parse_mode: 'HTML'
+        });
       }
 
-      await bot.sendMessage(chatId, `📩 Latest Code for ${body}:\n\n<code>${code}</code>\n\n🎯 Chances left: <b>${newChances}</b>`, {
-        parse_mode: 'HTML'
-      });
+    
       return;
     }
+    
 
 
     // ✅ Static menu handling
@@ -192,16 +194,19 @@ bot.on('callback_query', async (callbackQuery) => {
         break;
 
       case 'add_fund':
-        await bot.sendPhoto(chatId, photoPath, {
-          caption: "💰 Add Fund\n\nPlease choose a payment method:",
-          reply_markup: [      
-          [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
-          [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
-          [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
-        ]
-        });
-        break;
-
+          const photoPath = path.join(__dirname, 'plan.png');
+          await bot.sendPhoto(chatId, photoPath, {
+            caption: "💰 Add Fund\n\nPlease choose a payment method:",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "📲 Telebirr", callback_data: 'pay_telebirr' }],
+                [{ text: "🏦 CBE", callback_data: 'pay_cbe' }],
+                [{ text: "⬅️ Back to Menu", callback_data: 'back_to_menu' }]
+              ]
+            }
+          });
+          break;
+        
       case 'purchase_netflix':
         try {
           const snapshot = await database.ref('/').once('value');

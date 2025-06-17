@@ -1,75 +1,49 @@
 // gmailHelper.js
 const fs = require('fs');
 const path = require('path');
-const {google} = require('googleapis');
+const { google } = require('googleapis');
 
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
 const TOKEN_PATH = path.join(__dirname, 'token.json');
-
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
 
 async function authorize() {
-  try {
-    const token = fs.readFileSync(TOKEN_PATH);
-    oAuth2Client.setCredentials(JSON.parse(token));
-  } catch (err) {
-    throw new Error('No token found. Please authorize your app first.');
-  }
+  const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
+  const { client_secret, client_id, redirect_uris } = credentials.installed;
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+
+  const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+  oAuth2Client.setCredentials(token);
+
   return oAuth2Client;
 }
 
-const imaps = require('imap-simple');
+async function fetchLatestCodeFromEmail() {
+  const auth = await authorize();
+  const gmail = google.gmail({ version: 'v1', auth });
 
-async function fetchLatestCodeFromEmail(email, password) {
-  const config = {
-    imap: {
-      user: email,
-      password: password,
-      host: 'imap.gmail.com', // adjust if not Gmail
-      port: 993,
-      tls: true,
-      authTimeout: 3000,
-      tlsOptions: { rejectUnauthorized: false }
-    }
-  };
+  const res = await gmail.users.messages.list({
+    userId: 'me',
+    maxResults: 5,
+    q: 'from:account.netflix.com subject:(sign-in OR code) newer_than:1d'
+  });
+  
 
-  try {
-    const connection = await imaps.connect(config);
-    await connection.openBox('INBOX');
+  const messages = res.data.messages;
+  if (!messages || messages.length === 0) return null;
 
-    // Search for latest email FROM Netflix
-    const searchCriteria = [
-      ['FROM', 'no-reply@netflix.com']
-    ];
+  const msg = await gmail.users.messages.get({ userId: 'me', id: messages[0].id });
+  const payload = msg.data.payload;
+  let body = '';
 
-    // Fetch full body
-    const fetchOptions = { bodies: ['TEXT'], markSeen: false };
-
-    const messages = await connection.search(searchCriteria, fetchOptions);
-
-    if (messages.length === 0) {
-      await connection.end();
-      return null;
-    }
-
-    // Take the newest email (last in array)
-    const latestEmail = messages[messages.length - 1];
-    const allParts = latestEmail.parts.find(part => part.which === 'TEXT');
-
-    const body = allParts.body; // whole email body (usually plain text)
-
-    await connection.end();
-    return body;
-
-  } catch (error) {
-    console.error('Error fetching email:', error);
-    return null;
+  if (payload.parts) {
+    const part = payload.parts.find(p => p.mimeType === 'text/plain');
+    body = Buffer.from(part.body.data, 'base64').toString('utf8');
+  } else {
+    body = Buffer.from(payload.body.data, 'base64').toString('utf8');
   }
-}
 
+  const match = body.match(/\b\d{4}\b/);
+  return match ? match[0] : null;
+}
 
 module.exports = { fetchLatestCodeFromEmail };

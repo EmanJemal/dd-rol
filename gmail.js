@@ -49,7 +49,7 @@ function fetchLatestVerificationCode(auth) {
   gmail.users.messages.list({
     userId: 'me',
     maxResults: 5,
-    q: 'subject:code OR subject:verification newer_than:1d'
+    q: 'from:no-reply@netflix.com subject:(code OR verification) newer_than:1d'
   }, (err, res) => {
     if (err) return console.error('API returned an error:', err);
     const messages = res.data.messages;
@@ -64,8 +64,16 @@ function fetchLatestVerificationCode(auth) {
       id: msgId
     }, (err, res) => {
       if (err) return console.error('Failed to get message:', err);
-      const body = res.data.snippet;
-      const codeMatch = body.match(/\b\d{6}\b/); // 6-digit code
+      const payload = res.data.payload;
+      let body = '';
+      
+      if (payload.parts) {
+        const part = payload.parts.find(p => p.mimeType === 'text/plain');
+        body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+      } else {
+        body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+      }
+            const codeMatch = body.match(/\b\d{6}\b/); // 6-digit code
       if (codeMatch) {
         console.log('✅ Latest code:', codeMatch[0]);
       } else {
