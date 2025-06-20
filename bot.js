@@ -9,6 +9,9 @@ const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
 const fs = require('fs');
 const path = require('path');
+let usersMap = {};     // holds all users info by telegramCode
+let expiredUsers = []; // holds users with expired/expiring accounts
+
 
 // Ensure bot token is available
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -16,6 +19,11 @@ if (!token) {
   console.error("❌ the token from the .env file is not defined");
   process.exit(1);
 }
+
+function isAdmin(userId) {
+  return userId.toString() === BOT_OWNER_ID;
+}
+
 
 // Initialize bot
 const bot = new TelegramBot(token, { polling: true });
@@ -25,6 +33,7 @@ console.log("✅ Bot is up and running...");
 bot.onText(/\/start/, async (msg) => {
   await showMainMenu(msg.chat.id, msg); // Pass full msg for user info
 });
+
 
 // Handle button interactions
 bot.on('callback_query', async (callbackQuery) => {
@@ -121,7 +130,7 @@ bot.on('callback_query', async (callbackQuery) => {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: `✅ Send Code (${chance} chances)`, callback_data: `send_code_${accountKey}` }],
+            [{ text: `✅ GET Code (${chance} chances)`, callback_data: `send_code_${accountKey}` }],
             [{ text: "🔗 Join Group", callback_data: `join_group_${accountKey}` }],
             [{ text: "➕ Add Chance", callback_data: `add_chance_${accountKey}` }],
             [{ text: "⬅️ Back to Accounts", callback_data: 'view_account' }]
@@ -295,13 +304,85 @@ if (data.startsWith('send_code_')) {
     console.error("❌ Error handling callback_query:", error);
     await bot.sendMessage(chatId, "⚠️ An error occurred. Please try again later.");
   }
+
+  if (data === 'notify_expired') {
+    if (!expiredUsers || expiredUsers.length === 0) {
+      return bot.sendMessage(chatId, "❌ No expired users stored. Please run /listusers first.");
+    }
+  
+    for (const user of expiredUsers) {
+      try {
+        await bot.sendMessage(user.telegramCode, "⚠️ Your subscription has expired or is about to expire. Please renew to avoid disconnection.");
+      } catch (err) {
+        console.error(`❌ Failed to notify ${user.telegramCode}:`, err.message);
+      }
+    }
+    await bot.sendMessage(chatId, "✅ Notifications sent to all expired users.");
+  }
+  
+  if (data === 'logout_expired') {
+    bot.sendMessage(chatId, "✏️ Send the Telegram code of the user you want to logout:");
+  
+    bot.once('message', async (replyMsg) => {
+      const targetId = replyMsg.text.trim();
+      if (!/^\d+$/.test(targetId)) {
+        return bot.sendMessage(chatId, "❌ Invalid Telegram code.");
+      }
+  
+      try {
+        const userSnapshot = await database.ref(`users/${targetId}`).once('value');
+        const userData = userSnapshot.val();
+  
+        if (!userData || !userData.accounts) {
+          return bot.sendMessage(chatId, "❌ This user has no accounts to remove.");
+        }
+  
+        const username = userData.contactInfo?.username || `user-${targetId}`;
+        const now = moment();
+  
+        let removedCount = 0;
+  
+        for (const accountKey in userData.accounts) {
+          const acc = userData.accounts[accountKey];
+          const plan = acc.plan || '1 Month';
+          const purchaseDate = acc.purchaseDate;
+  
+          const planDays = {
+            "1 Month": 30,
+            "2 Months": 60,
+            "3 Months": 90
+          }[plan] || 30;
+  
+          const purchaseMoment = moment(purchaseDate, "YYYY-MM-DD");
+          const expiryMoment = purchaseMoment.clone().add(planDays, 'days');
+  
+          if (expiryMoment.diff(now, 'days') < 0) {
+            // Remove from user's account list
+            await database.ref(`users/${targetId}/accounts/${accountKey}`).remove();
+  
+            // Remove from the global account's users list
+            await database.ref(`${accountKey}/users/${username}`).remove();
+  
+            removedCount++;
+          }
+        }
+  
+        if (removedCount === 0) {
+          await bot.sendMessage(chatId, `✅ User ${targetId} has no expired accounts to remove.`);
+        } else {
+          await bot.sendMessage(chatId, `✅ Removed ${removedCount} expired account(s) from user ${targetId}.`);
+          await bot.sendMessage(targetId, "🚫 One or more of your accounts were logged out due to expired subscription.");
+        }
+  
+      } catch (err) {
+        console.error(err.message);
+        await bot.sendMessage(chatId, `❌ Failed to logout expired accounts for user ${targetId}.`);
+      }
+    });
+  }
+  
+
 });
-
-
-
-
-
-
 
 bot.on('photo', async (msg) => {
   const chatId = msg.chat.id;
@@ -344,8 +425,6 @@ bot.on('photo', async (msg) => {
     await bot.sendMessage(chatId, "⚠️ Error while handling the image. Please try again.");
   }
 });
-
-
 
 
 bot.on('message', async (msg) => {
@@ -555,9 +634,6 @@ bot.onText(/\/cancel/, async (msg) => {
   }
 });
 
-
-
-
 // Show the main menu
 async function showMainMenu(chatId, msg = null) {
   const userRef = database.ref(`users/${chatId}`);
@@ -633,4 +709,249 @@ async function showMainMenu(chatId, msg = null) {
   }
 }
 
+
+bot.onText(/\/send/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  bot.sendMessage(chatId, "📣 Send the message:");
+  
+  bot.once('message', async (replyMsg) => {
+    const broadcastText = replyMsg.text;
+    if (!broadcastText || broadcastText.startsWith('/')) return;
+
+    const usersSnapshot = await database.ref('users').once('value');
+    const users = usersSnapshot.val();
+
+    if (!users) return bot.sendMessage(chatId, "❌ No users found.");
+
+    for (const userId in users) {
+      try {
+        await bot.sendMessage(userId, `📢:${broadcastText}`);
+      } catch (err) {
+        console.error(`❌ Failed to send to ${userId}:`, err.message);
+      }
+    }
+
+    bot.sendMessage(chatId, "✅ Message sent to all users.");
+  });
+});
+
+
+bot.onText(/\/sto (\d+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  const targetId = match[1];
+  bot.sendMessage(chatId, `✉️ Enter the message to send to user ${targetId}:`);
+
+  bot.once('message', async (replyMsg) => {
+    const message = replyMsg.text;
+    if (!message || message.startsWith('/')) return;
+
+    try {
+      await bot.sendMessage(targetId, `📬:${message}`);
+      bot.sendMessage(chatId, `✅ Message sent to ${targetId}.`);
+    } catch (error) {
+      console.error(error.message);
+      bot.sendMessage(chatId, `❌ Failed to send to ${targetId}.`);
+    }
+  });
+});
+
+
+
+const moment = require('moment'); // At the top of your file
+
+bot.onText(/\/listusers/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  try {
+    const snapshot = await database.ref('users').once('value');
+    usersMap = snapshot.val() || {};
+    expiredUsers = [];
+
+    if (!usersMap || Object.keys(usersMap).length === 0) {
+      return bot.sendMessage(chatId, "❌ No users found.");
+    }
+
+    let messageChunks = [];
+    let currentChunk = "";
+
+    for (const telegramCode in usersMap) {
+      const user = usersMap[telegramCode];
+      const contact = user.contactInfo || {};
+      const accounts = user.accounts || {};
+      const balance = user.balance || 0;
+
+      let userText = `👤 ${contact.username || contact.first_name || 'Unknown'}\n`;
+      userText += `🆔 Telegram Code: ${telegramCode}\n`;
+      userText += `💰 Balance: ${balance}\n`;
+
+      if (Object.keys(accounts).length > 0) {
+        userText += `📦 Accounts:\n`;
+
+        let isExpired = false;
+
+        for (const accName in accounts) {
+          const acc = accounts[accName];
+          const plan = acc.plan || 'Unknown';
+          const startDate = acc.purchaseDate || null;
+          const chance = acc.chance ?? '-';
+
+          const planDays = {
+            "1 Month": 30,
+            "2 Months": 60,
+            "3 Months": 90
+          }[plan] || 0;
+
+          let daysLeftText = 'Unknown';
+          if (startDate) {
+            const purchaseMoment = moment(startDate, "YYYY-MM-DD");
+            const expiryMoment = purchaseMoment.clone().add(planDays, 'days');
+            const now = moment();
+
+            const daysLeft = expiryMoment.diff(now, 'days');
+
+            if (daysLeft >= 0) {
+              daysLeftText = `${daysLeft} day(s) left`;
+              if (daysLeft <= 3) isExpired = true;
+            } else {
+              daysLeftText = `Expired ${Math.abs(daysLeft)} day(s) ago`;
+              isExpired = true;
+            }
+          }
+
+          userText += `  - ${accName} | ${plan} | ${startDate} | ${chance} chances | ⏳ ${daysLeftText}\n`;
+        }
+
+        if (isExpired) {
+          expiredUsers.push({
+            username: contact.username || contact.first_name || 'Unknown',
+            telegramCode
+          });
+        }
+
+      } else {
+        userText += `📦 Accounts: None\n`;
+      }
+
+      userText += `\n`;
+
+      if ((currentChunk + userText).length > 3500) {
+        messageChunks.push(currentChunk);
+        currentChunk = "";
+      }
+      currentChunk += userText;
+    }
+
+    if (currentChunk) {
+      messageChunks.push(currentChunk);
+    }
+
+    for (const chunk of messageChunks) {
+      await bot.sendMessage(chatId, chunk);
+    }
+
+    // Send second message listing expired/expiring users
+    if (expiredUsers.length > 0) {
+      let expireText = `⚠️ Expiring/Expired Subscriptions:\n\n`;
+
+      for (const user of expiredUsers) {
+        expireText += `👤 ${user.username}\n🆔 ${user.telegramCode}\n\n`;
+      }
+
+      await bot.sendMessage(chatId, expireText, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "✅ Notify Expired Users", callback_data: 'notify_expired' }],
+            [{ text: "🚫 Logout Specific User", callback_data: 'logout_expired' }]
+          ]
+        }
+      });
+    } else {
+      await bot.sendMessage(chatId, "✅ No users with expired or near-expired subscriptions.");
+    }
+
+  } catch (error) {
+    console.error("❌ Error listing users:", error.message);
+    bot.sendMessage(chatId, "❌ Failed to fetch user list.");
+  }
+});
+
+
+bot.onText(/\/adddate/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(chatId)) return;
+
+  bot.sendMessage(chatId, "📨 Please send the Telegram code of the user:");
+
+  bot.once('message', async (codeMsg) => {
+    const userCode = codeMsg.text.trim();
+    if (!/^\d+$/.test(userCode)) {
+      return bot.sendMessage(chatId, "❌ Invalid Telegram code.");
+    }
+
+    const userSnapshot = await database.ref(`users/${userCode}`).once('value');
+    const userData = userSnapshot.val();
+
+    if (!userData) {
+      return bot.sendMessage(chatId, "❌ No user found with this Telegram code.");
+    }
+
+    const username = userData.contactInfo?.username || userData.contactInfo?.first_name || `user-${userCode}`;
+
+    bot.sendMessage(chatId, "📂 Send the account name to update or add:");
+
+    bot.once('message', async (accountMsg) => {
+      const accountKey = accountMsg.text.trim();
+
+      if (!accountKey) {
+        return bot.sendMessage(chatId, "❌ Account name cannot be empty.");
+      }
+
+      bot.sendMessage(chatId, "🗓️ Send the new purchase date (format: YYYY-MM-DD):");
+
+      bot.once('message', async (dateMsg) => {
+        const dateText = dateMsg.text.trim();
+        const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(dateText);
+
+        if (!isValidDate) {
+          return bot.sendMessage(chatId, "❌ Invalid date format. Please use YYYY-MM-DD.");
+        }
+
+        try {
+          // Update the user's purchase date
+          const userAccountRef = database.ref(`users/${userCode}/accounts/${accountKey}`);
+          await userAccountRef.update({
+            purchaseDate: dateText
+          });
+
+          // Ensure plan and chance exist
+          const defaults = {};
+          const accountSnapshot = await userAccountRef.once('value');
+          if (!accountSnapshot.val()?.plan) defaults.plan = "1 Month";
+          if (!accountSnapshot.val()?.chance) defaults.chance = 3;
+          if (Object.keys(defaults).length > 0) await userAccountRef.update(defaults);
+
+          // Add username to global account's user list
+          await database.ref(`${accountKey}/users/${username}`).set(true);
+
+          // Notify admin
+          await bot.sendMessage(chatId, `✅ Purchase date for account "${accountKey}" of user ${userCode} set to ${dateText}.`);
+
+          // Notify user
+          await bot.sendMessage(userCode, `🗓️ Your subscription to *${accountKey}* has been updated.\nNew purchase date: *${dateText}*`, {
+            parse_mode: "Markdown"
+          });
+
+        } catch (err) {
+          console.error(err.message);
+          await bot.sendMessage(chatId, "❌ Failed to update the purchase date.");
+        }
+      });
+    });
+  });
+});
 
