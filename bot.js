@@ -1,15 +1,10 @@
 require('dotenv').config();
-const path = require('path');
-const fs = require('fs');
-const TelegramBot = require('node-telegram-bot-api');
-const { google } = require('googleapis');
-const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 const admin = require('firebase-admin');
 
-// ✅ Decode base64-encoded Firebase service account key
-const base64Key = process.env.FIREBASE_BASE64;
+// ✅ Decode Firebase base64 service account
+const base64Key = process.env.FIREBASE_CONFIG_BASE64;
 if (!base64Key) {
-  console.error('❌ FIREBASE_BASE64 not found');
+  console.error('❌ FIREBASE_CONFIG_BASE64 not found');
   process.exit(1);
 }
 
@@ -18,7 +13,7 @@ try {
   const decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
   serviceAccount = JSON.parse(decodedKey);
 } catch (err) {
-  console.error('❌ Failed to parse FIREBASE_BASE64:', err.message);
+  console.error('❌ Failed to parse FIREBASE_CONFIG_BASE64:', err.message);
   process.exit(1);
 }
 
