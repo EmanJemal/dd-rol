@@ -1,21 +1,28 @@
 require('dotenv').config();
 const path = require('path');
+const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
 const { google } = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
-
-// ✅ Load Firebase Admin SDK with secret from environment
 const admin = require('firebase-admin');
-const fs = require('fs');
 
-const serviceAccountPath = process.env.FIREBASE_KEY_PATH;
-if (!fs.existsSync(serviceAccountPath)) {
-  console.error('❌ service account file not found');
+// ✅ Decode base64-encoded Firebase service account key (for Railway)
+const base64Key = process.env.FIREBASE_KEY_B64;
+if (!base64Key) {
+  console.error('❌ FIREBASE_KEY_B64 not found');
   process.exit(1);
 }
 
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+const decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(decodedKey);
+} catch (err) {
+  console.error('❌ Failed to parse decoded Firebase key:', err.message);
+  process.exit(1);
+}
 
+// ✅ Initialize Firebase
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   databaseURL: process.env.FIREBASE_DB_URL
@@ -32,6 +39,7 @@ if (!token) {
   console.error("❌ TELEGRAM_BOT_TOKEN is not defined in .env");
   process.exit(1);
 }
+
 
 // ✅ Data stores
 const pendingPhotos = {}; // userId => true/false
