@@ -3,8 +3,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const admin = require('firebase-admin');
 
-// ✅ Decode Firebase base64 service account
-const base64Key = process.env.FIREBASE_CONFIG_BASE64;
+const base64Key = process.env.FIREBASE_CONFIG_BASE64; // ✅ must match .env key
 if (!base64Key) {
   console.error('❌ FIREBASE_CONFIG_BASE64 not found');
   process.exit(1);
@@ -26,6 +25,7 @@ admin.initializeApp({
 
 const database = admin.database();
 module.exports = { database };
+
 
 // ✅ Bot & admin setup
 const token = process.env.TELEGRAM_BOT_TOKEN;
