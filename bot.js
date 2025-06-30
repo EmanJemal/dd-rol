@@ -1,33 +1,35 @@
 require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
-const { database } = require('./firebaseConfig');
-const pendingPhotos = {}; // userId => true/false
-const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
-const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
-const {google} = require('googleapis');
-const { fetchLatestCodeFromEmail } = require('./gmailHelper');
-const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
 const fs = require('fs');
 const path = require('path');
-let usersMap = {};     // holds all users info by telegramCode
-let expiredUsers = []; // holds users with expired/expiring accounts
+const TelegramBot = require('node-telegram-bot-api');
+const { database } = require('./firebaseConfig');
+const { google } = require('googleapis');
+const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 
-
-// Ensure bot token is available
+// Bot & admin setup
 const token = process.env.TELEGRAM_BOT_TOKEN;
+const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
+
 if (!token) {
-  console.error("❌ the token from the .env file is not defined");
+  console.error("❌ TELEGRAM_BOT_TOKEN is not defined in .env");
   process.exit(1);
 }
+
+// Data stores
+const pendingPhotos = {}; // userId => true/false
+const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
+const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
+let usersMap = {};     // holds all users info by telegramCode
+let expiredUsers = []; // holds users with expired/expiring accounts
 
 function isAdmin(userId) {
   return userId.toString() === BOT_OWNER_ID;
 }
 
-
 // Initialize bot
 const bot = new TelegramBot(token, { polling: true });
 console.log("✅ Bot is up and running...");
+
 
 // Handle /start command
 bot.onText(/\/start/, async (msg) => {
