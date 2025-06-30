@@ -1,4 +1,6 @@
 require('dotenv').config();
+const TelegramBot = require('node-telegram-bot-api');
+
 const admin = require('firebase-admin');
 
 // ✅ Decode Firebase base64 service account
