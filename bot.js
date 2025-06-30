@@ -2,11 +2,30 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
-const { database } = require('./firebaseConfig');
 const { google } = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 
-// Bot & admin setup
+// ✅ Load Firebase Admin SDK with secret from environment
+const admin = require('firebase-admin');
+
+// Read and parse service account key from environment-specified file path
+const serviceAccountPath = process.env.FIREBASE_KEY_PATH;
+if (!serviceAccountPath || !fs.existsSync(serviceAccountPath)) {
+  console.error('❌ FIREBASE_KEY_PATH not set or file not found.');
+  process.exit(1);
+}
+
+const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+
+// Initialize Firebase
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: process.env.FIREBASE_DB_URL
+});
+
+const database = admin.database(); // export this if needed elsewhere
+
+// ✅ Bot & admin setup
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 
@@ -15,7 +34,7 @@ if (!token) {
   process.exit(1);
 }
 
-// Data stores
+// ✅ Data stores
 const pendingPhotos = {}; // userId => true/false
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
 const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
@@ -26,16 +45,14 @@ function isAdmin(userId) {
   return userId.toString() === BOT_OWNER_ID;
 }
 
-// Initialize bot
+// ✅ Initialize bot
 const bot = new TelegramBot(token, { polling: true });
 console.log("✅ Bot is up and running...");
 
-
-// Handle /start command
+// ✅ Handle /start command
 bot.onText(/\/start/, async (msg) => {
   await showMainMenu(msg.chat.id, msg); // Pass full msg for user info
 });
-
 
 // Handle button interactions
 bot.on('callback_query', async (callbackQuery) => {
