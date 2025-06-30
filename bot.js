@@ -7,23 +7,23 @@ const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 
 // ✅ Load Firebase Admin SDK with secret from environment
 const admin = require('firebase-admin');
+const fs = require('fs');
 
-// Read and parse service account key from environment-specified file path
 const serviceAccountPath = process.env.FIREBASE_KEY_PATH;
-if (!serviceAccountPath || !fs.existsSync(serviceAccountPath)) {
-  console.error('❌ FIREBASE_KEY_PATH not set or file not found.');
+if (!fs.existsSync(serviceAccountPath)) {
+  console.error('❌ service account file not found');
   process.exit(1);
 }
 
 const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
 
-// Initialize Firebase
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   databaseURL: process.env.FIREBASE_DB_URL
 });
 
-const database = admin.database(); // export this if needed elsewhere
+const database = admin.database();
+module.exports = { database };
 
 // ✅ Bot & admin setup
 const token = process.env.TELEGRAM_BOT_TOKEN;
