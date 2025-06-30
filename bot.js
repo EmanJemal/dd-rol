@@ -6,26 +6,25 @@ const { google } = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 const admin = require('firebase-admin');
 
-// ✅ Decode base64-encoded Firebase service account key (for Railway)
-const base64Key = process.env.FIREBASE_KEY_B64;
+// ✅ Decode base64-encoded Firebase service account key
+const base64Key = process.env.FIREBASE_BASE64;
 if (!base64Key) {
-  console.error('❌ FIREBASE_KEY_B64 not found');
+  console.error('❌ FIREBASE_BASE64 not found');
   process.exit(1);
 }
 
-const decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
 let serviceAccount;
 try {
+  const decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
   serviceAccount = JSON.parse(decodedKey);
 } catch (err) {
-  console.error('❌ Failed to parse decoded Firebase key:', err.message);
+  console.error('❌ Failed to parse FIREBASE_BASE64:', err.message);
   process.exit(1);
 }
 
-// ✅ Initialize Firebase
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: process.env.FIREBASE_DB_URL
+  databaseURL: process.env.FIREBASE_DB_URL,
 });
 
 const database = admin.database();
@@ -39,7 +38,6 @@ if (!token) {
   console.error("❌ TELEGRAM_BOT_TOKEN is not defined in .env");
   process.exit(1);
 }
-
 
 // ✅ Data stores
 const pendingPhotos = {}; // userId => true/false
