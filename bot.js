@@ -1,60 +1,39 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-
-const admin = require('firebase-admin');
-
-const base64Key = process.env.FIREBASE_CONFIG_BASE64; // ✅ must match .env key
-if (!base64Key) {
-  console.error('❌ FIREBASE_CONFIG_BASE64 not found');
-  process.exit(1);
-}
-
-let serviceAccount;
-try {
-  const decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
-  serviceAccount = JSON.parse(decodedKey);
-} catch (err) {
-  console.error('❌ Failed to parse FIREBASE_CONFIG_BASE64:', err.message);
-  process.exit(1);
-}
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: process.env.FIREBASE_DB_URL,
-});
-
-const database = admin.database();
-module.exports = { database };
-
-
-// ✅ Bot & admin setup
-const token = process.env.TELEGRAM_BOT_TOKEN;
-const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
-
-if (!token) {
-  console.error("❌ TELEGRAM_BOT_TOKEN is not defined in .env");
-  process.exit(1);
-}
-
-// ✅ Data stores
+const { database } = require('./firebaseConfig');
 const pendingPhotos = {}; // userId => true/false
+const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
+const {google} = require('googleapis');
+const { fetchLatestCodeFromEmail } = require('./gmailHelper');
 const activeCodeRequests = {}; // { [chatId_accountKey]: timestamp }
+const fs = require('fs');
+const path = require('path');
 let usersMap = {};     // holds all users info by telegramCode
 let expiredUsers = []; // holds users with expired/expiring accounts
+
+
+// Ensure bot token is available
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
+  console.error("❌ the token from the .env file is not defined");
+  process.exit(1);
+}
 
 function isAdmin(userId) {
   return userId.toString() === BOT_OWNER_ID;
 }
 
-// ✅ Initialize bot
+
+// Initialize bot
 const bot = new TelegramBot(token, { polling: true });
 console.log("✅ Bot is up and running...");
 
-// ✅ Handle /start command
+// Handle /start command
 bot.onText(/\/start/, async (msg) => {
   await showMainMenu(msg.chat.id, msg); // Pass full msg for user info
 });
+
 
 // Handle button interactions
 bot.on('callback_query', async (callbackQuery) => {
@@ -975,4 +954,3 @@ bot.onText(/\/adddate/, async (msg) => {
     });
   });
 });
-
