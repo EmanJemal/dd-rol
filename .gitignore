@@ -2,4 +2,6 @@ node_modules
 .env
 serviceAccountKey.json
 serviceAccountKey.b64.txt
+tokens/
+credentials.json
 *.log

@@ -32,7 +32,7 @@ fs.readFile(CREDENTIALS_PATH, (err, content) => {
         fs.mkdirSync(tokenDir);
       }
 
-      const tokenPath = path.join(tokenDir, 'token-pentawebdev1@gmail.com.json');
+      const tokenPath = path.join(tokenDir, 'token-ilabstech1@gmail.com.json');
       fs.writeFileSync(tokenPath, JSON.stringify(token));
       console.log('✅ Token stored to', tokenPath);
     });
