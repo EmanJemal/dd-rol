@@ -240,7 +240,7 @@ if (data.startsWith('send_code_')) {
         const buttons = [];
 
         for (const accountKey of Object.keys(allData)) {
-          if (accountKey.startsWith('Account-')) {
+          if (accountKey.startsWith(' ')) {
             buttons.push([{ text: accountKey, callback_data: `select_account_${accountKey}` }]);
           }
         }
