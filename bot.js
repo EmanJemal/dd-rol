@@ -35,21 +35,6 @@ bot.deleteWebHook()
 
   .catch(err => console.log("Webhook delete error:", err));
   
-const express = require("express");
-const app = express();
-
-app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
-
-const url = process.env.RAILWAY_PUBLIC_DOMAIN; // or your Railway URL
-
-bot.setWebHook(`${url}/bot${token}`);
-
-app.post(`/bot${token}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
 
 app.listen(PORT, () => {
   console.log("🚀 Webhook server running on port", PORT);
@@ -982,4 +967,3 @@ bot.onText(/\/adddate/, async (msg) => {
     });
   });
 });
-// force redeploy
