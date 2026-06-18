@@ -240,7 +240,9 @@ if (data.startsWith('send_code_')) {
         const buttons = [];
 
         for (const accountKey of Object.keys(allData)) {
+          if (accountKey.startsWith('Account-')) {
             buttons.push([{ text: accountKey, callback_data: `select_account_${accountKey}` }]);
+          }
         }
 
         if (buttons.length === 0) {
@@ -532,7 +534,10 @@ bot.on('message', async (msg) => {
       case 'askAccountKey':
         {
           const accountKey = msg.text.trim();
-
+          if (!accountKey.match(/^Account-\d+$/i)) {
+            await bot.sendMessage(chatId, "❌ Invalid format. Account key must look like 'Account-1' or 'Account-123'. Please enter again:");
+            return;
+          }
           session.data.accountKey = accountKey;
 
           // Check if account already exists
