@@ -240,9 +240,7 @@ if (data.startsWith('send_code_')) {
         const buttons = [];
 
         for (const accountKey of Object.keys(allData)) {
-          if (accountKey.startsWith(' ')) {
             buttons.push([{ text: accountKey, callback_data: `select_account_${accountKey}` }]);
-          }
         }
 
         if (buttons.length === 0) {
@@ -534,6 +532,7 @@ bot.on('message', async (msg) => {
       case 'askAccountKey':
         {
           const accountKey = msg.text.trim();
+
           session.data.accountKey = accountKey;
 
           // Check if account already exists
