@@ -3,5 +3,5 @@ node_modules
 serviceAccountKey.json
 serviceAccountKey.b64.txt
 tokens/
-credentials.json
+app/credentials.json
 *.log
