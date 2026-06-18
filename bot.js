@@ -27,6 +27,14 @@ function isAdmin(userId) {
 
 // Initialize bot
 const bot = new TelegramBot(token);
+// ✅ REMOVE OLD WEBHOOK (important fix for Railway issues)
+
+bot.deleteWebHook()
+
+  .then(() => console.log("✅ Webhook removed, using polling"))
+
+  .catch(err => console.log("Webhook delete error:", err));
+  
 const express = require("express");
 const app = express();
 
