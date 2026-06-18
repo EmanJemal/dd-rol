@@ -3,3 +3,5 @@ node_modules
 serviceAccountKey.json
 serviceAccountKey.b64.txt
 *.log
+node_modules
+echo "serviceAccountKey.json" >> .gitignore
