@@ -40,15 +40,12 @@ const PORT = process.env.PORT || 3000;
 const url = process.env.RAILWAY_PUBLIC_DOMAIN;
 
 // set webhook
-bot.setWebHook(`${url}/bot${token}`);
+bot.setWebHook(`https://${url}/bot${token}`);
+console.log("Webhook set to:", `https://${url}/bot${token}`);
 
 app.post(`/bot${token}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
-});
-
-app.listen(PORT, () => {
-  console.log("Server running on", PORT);
 });
 
 app.listen(PORT, () => {
