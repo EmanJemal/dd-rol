@@ -26,7 +26,27 @@ function isAdmin(userId) {
 
 
 // Initialize bot
-const bot = new TelegramBot(token, { polling: true });
+const bot = new TelegramBot(token);
+const express = require("express");
+const app = express();
+
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+
+const url = process.env.RAILWAY_PUBLIC_DOMAIN; // or your Railway URL
+
+bot.setWebHook(`${url}/bot${token}`);
+
+app.post(`/bot${token}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(PORT, () => {
+  console.log("🚀 Webhook server running on port", PORT);
+});
+
 console.log("✅ Bot is up and running...");
 
 // Handle /start command
