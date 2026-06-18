@@ -2,7 +2,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { database } = require('./firebaseConfig');
 const pendingPhotos = {}; // userId => true/false
-const BOT_OWNER_ID = process.env.BOT_OWNER_ID; // e.g., 123456789
+const BOT_OWNER_ID = process.env.ADMIN-TELEGRAM_BOT_TOKEN; // e.g., 123456789
 const pendingConfirmations = {}; // key: ownerMessageId, value: { clientId, fileId, fileLink }
 const {google} = require('googleapis');
 const { fetchLatestCodeFromEmail } = require('./gmailHelper');
